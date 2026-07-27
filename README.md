@@ -1,149 +1,125 @@
-# MLOps Hands-On 1 | Risk Score Prediction (Chicago Crimes) 
+# Risk Score Feature Pipeline — Safe Route, Visual Risk Indicator, Safe Place Locator - Final Project
 
-**Group 5**
-**Anggota:** 
-- Nadia Aisyah Fazila
-- Sabbia Meilandri Putri Delarosya
+Notebook ini membangun **dataset fitur + label (risk score)** untuk tiga fitur produk:
 
-## 1. Penjelasan Singkat Dataset
+- **Safe Route Recommendation & Risk Prediction**
+- **Visual Risk Indicator** (🟢/🟡/🔴)
+- **Safe Place Locator**
 
-- Sumber: [Chicago Crimes](https://drive.google.com/file/d/12K13Az7ynV3ZVimSARImgggnbDbVqjk_/view?usp=sharing)
-- Subset yang digunakan: 
+Karena data kejahatan & transit Jakarta (MRT) tidak tersedia untuk kebutuhan ini, notebook memakai **Chicago Crimes + stasiun CTA ('L' train)** sebagai *analog struktural*: satu baris kejahatan = satu insiden, satu stasiun CTA = satu stasiun MRT. 
 
-    **3 tahun terakhir yang tersedia di dataset (2024-2026)**.
+Fitur di luar scope ini (SOS/emergency, anonymous reporting, integrasi kepolisian/CCTV, moda transportasi selain MRT) **tidak** direpresentasikan di notebook ini.
 
-    **Justifikasi:**
-    1. **Rentang tahun dipilih, bukan area/district**, supaya variasi spasial (hotspot vs area aman) tetap utuh untuk dianalisis. Ini krusial karena Risk Score sangat bergantung pada sinyal spasial yang kaya. Membatasi ke satu area/district justru menghilangkan variasi itu sebelum sempat dianalisis.
-    2. **3 tahun** dipilih supaya pola musiman (`month`, `day-of-week`) tidak bias ke satu musim/periode tertentu, sekaligus menggunakan data paling terkini yang tersedia supaya relevan dengan kondisi kejahatan Chicago saat ini.
+---
 
-- Jumlah baris setelah subset 3 tahun (2024-2026): **553.919 baris**.
-- Jumlah baris setelah cleaning: **550.896 baris** (3.023 baris atau ~0,55% dibuang karena koordinat/tanggal tidak valid, seperti koordinat (0,0) atau di luar bounding box Chicago). Persentase yang dibuang tergolong kecil, menandakan kualitas data cukup baik untuk subset ini.
+## 1. Alur Pipeline
 
-## 2. Insight EDA
-
-**Temuan penting: artefak pencatatan waktu:**
-- Saya menemukan **5,80% baris** dengan waktu kejadian yang kemungkinan tidak presisi, yaitu pada jam 0 dan 12 yang menunjukkan lonjakan tidak wajar pada beberapa grafik awal (jauh di atas jam-jam sekitarnya).
-- Verifikasi lewat distribusi menit mengonfirmasi bahwa pada jam 0, menit `:00` muncul 10.571 kali (~6x lebih sering dari menit tersering berikutnya), dan pada jam 12, menit `:00` muncul 6.424 kali (~3,6x lebih sering), jauh melebihi menit lain yang tersebar relatif merata.
-- Ini mengindikasikan waktu kejadian **dibulatkan/default** saat tidak diketahui pasti oleh pencatat, bukan sinyal kejahatan asli. Perbandingan **pola jam sebelum vs sesudah baris ini dikeluarkan** membuktikan dampaknya signifikan:
-    - **Sebelum** exclude: jam 0 melonjak ke ~20.000 kejadian (vs ~9.000-11.000 di jam sekitarnya) dan jam 12 menonjol tidak wajar (~16.700).
-    - **Sesudah** exclude: kurva jadi mulus dan masuk akal secara domain (aktivitas rendah dini hari, naik bertahap, puncak sore-malam jam 15-16).
-- Karena dampaknya terbukti besar, baris-baris ini **saya keluarkan dari seluruh analisis selanjutnya** (feature engineering, severity scoring, pseudo-labeling).
-
-**Pola jam: hari kerja vs akhir pekan:**
-Hari kerja menunjukkan pola "gundukan siang-sore" yang jelas (naik bertahap dari pagi, puncak sekitar jam 12 dan 15-16), sedangkan akhir pekan jauh lebih flat pada rentang jam yang sama.
-
-**Pola waktu berbeda per jenis kejahatan:**
-Lima jenis kejahatan terbanyak menunjukkan pola jam yang cukup berbeda satu sama lain:
-- **THEFT** sangat terkonsentrasi siang-sore (puncak di jam 12-16), sejalan dengan pencurian oportunistik yang butuh keramaian/aktivitas publik.
-- **BATTERY** dan **ASSAULT** tetap tinggi di dini hari (jam 0-2), kemungkinan terkait pengaruh alkohol di malam hari, lalu naik lagi di sore-malam.
-- **MOTOR VEHICLE THEFT** meningkat di jam malam (18-23), sejalan dengan kendaraan yang diparkir tanpa pengawasan serta faktor visibilitas yang rendah akibat jalanan yang sudah gelap dan sepi, sehingga menurunkan risiko pelaku untuk teridentifikasi.
-
-Perbedaan pola ini menunjukkan bahwa "jam rawan" **tidak seragam** antar jenis kejahatan. Ini menjustifikasi kenapa fitur temporal idealnya cukup detail untuk menangkap perbedaan ini.
-
-**Interaksi hari x jam:**
-Heatmap kombinasi hari-jam menunjukkan aktivitas yang lebih tinggi di jam sore-malam (15-19), khususnya mendekati akhir pekan (Jumat-Sabtu), pola yang tidak terlihat sejelas ini bila `dow` dan `hour` dianalisis terpisah satu-satu.
-
-**Kesimpulan:**
-Insight-insight di atas menjustifikasi kenapa fitur temporal (cyclical encoding) *dan* spasial (grid aggregation) sama-sama diperlukan untuk memodelkan Risk Score: pola kejahatan jelas tidak seragam lintas waktu maupun lokasi, bahkan berinteraksi satu sama lain (hari × jam, jenis kejahatan x jam), bukan sekadar fungsi linear sederhana dari salah satu dimensi saja. EDA ini juga menunjukkan pentingnya memeriksa kualitas data sebelum feature engineering, karena artefak pencatatan waktu (jam 0 / 12) dapat secara signifikan mendistorsi kesimpulan bila tidak ditangani.
-
-## 3. Justifikasi Keputusan Desain
-
-### 3.1 Feature Engineering
-
-**Ukuran grid (sel spasial):** Saya menguji dua opsi secara kuantitatif sebelum memutuskan:
-
-| Ukuran | Jumlah sel unik | Rata-rata kejadian/sel |
+| # | Tahap | Ringkasan |
 |---|---|---|
-| 2 desimal (~1.110 m/sel) | 726 | 714,8 |
-| 3 desimal (~111 m/sel) | 37.996 | 13,7 |
+| 1 | Setup & Import | Load Chicago Crimes (3 tahun terakhir) + stasiun CTA |
+| 2 | Pembersihan Data | Audit missing/duplikat, parsing tanggal, filter koordinat, buang artefak pencatatan waktu |
+| 3 | Subset Spasial | Persempit ke radius 600 m jalan kaki dari stasiun CTA terdekat |
+| 4 | EDA | Pola temporal (jam/hari/bulan) dan spasial (hotspot) |
+| 5 | Feature Engineering | Cyclical encoding waktu, grid spasial 3 desimal (~110 m/sel), fitur Safe Place |
+| 6 | Pseudo-Labeling | Severity scoring → temporal decay → spatial smoothing → normalisasi → **risk_score** |
+| 7 | Audit & Penyimpanan | Validasi akhir, simpan `features_labels.csv/.parquet`, `model_config.csv`, `safe_places.csv` |
 
-Saya memilih **3 desimal (~111 m/sel)**, meskipun rata-rata kejadian per sel jauh lebih kecil. Pertimbangannya:
-- 2 desimal terlalu kasar (~1,1 km/sel, hanya 726 sel untuk seluruh Chicago). Risk Score pada resolusi ini terlalu tergeneralisasi untuk actionable secara praktis (area rawan dan aman yang berdekatan bisa tercampur dalam satu sel).
-- 3 desimal memberi resolusi setara skala blok jalan, jauh lebih berguna untuk prediksi risiko lokasi spesifik.
-- Sparsity per sel (rata-rata 13,7 kejadian) yang menjadi trade-off-nya saya tangani lewat spatial smoothing berbasis BallTree pada tahap Pseudo-Labeling (lihat 3.2), sel dengan data tipis "meminjam" sinyal dari sel-sel tetangga, sehingga estimasi risiko tetap stabil tanpa kehilangan resolusi spasial.
+---
 
-**Fitur agregat tambahan:**
-- **`crime_diversity`** 
+## 2. Keputusan & Alasan (per tahap)
 
-    Jumlah jenis kejahatan (`Primary Type`) berbeda per unit (sel × hari × jam). Area dengan banyak jenis kejahatan berbeda mengindikasikan risiko yang lebih beragam/tidak terprediksi, berbeda dari area yang hanya didominasi satu jenis kejahatan ringan berulang.
-- **`arrest_rate`**
+### 2.1 Subset Data: 3 tahun, radius 600 m dari stasiun
+- **Rentang tahun dipilih, bukan area/district**, supaya variasi spasial (hotspot vs area aman) tetap utuh untuk dianalisis. Ini krusial karena Risk Score sangat bergantung pada sinyal spasial yang kaya. Membatasi ke satu area/district justru menghilangkan variasi itu sebelum sempat dianalisis.
+- **3 tahun** dipilih supaya pola musiman (`month`, `day-of-week`) tidak bias ke satu musim / periode tertentu, sekaligus menggunakan data paling terkini yang tersedia supaya relevan dengan kondisi kejahatan Chicago saat ini.
+- **Radius 600 m** dipakai untuk mempersempit scope dari skala kota ke skala area stasiun, dihitung dengan *great circle distance* (haversine) karena data jaringan jalan pejalan kaki Chicago tidak tersedia. Untuk radius seratusan meter pendekatan ini dianggap cukup wajar, tapi tetap dicatat sebagai limitasi (bukan jarak jalan sesungguhnya).
 
-    Proporsi kejadian yang berujung penangkapan per unit. Area dengan arrest rate rendah bisa mengindikasikan penegakan hukum yang kurang menjangkau, yang secara tidak langsung berkorelasi dengan risiko berkelanjutan di lokasi itu.
+### 2.2 Pembersihan Artefak Pencatatan Waktu
+Ditemukan lonjakan tidak wajar di jam 00:00 dan 12:00 — hasil investigasi menunjukkan ini artefak pembulatan waktu oleh petugas pencatat (menit `:00` dominan), bukan pola kejahatan sungguhan. Baris dengan indikasi waktu dibulatkan dikeluarkan dari seluruh analisis selanjutnya, supaya risk_score merefleksikan pola waktu asli.
 
-Keduanya secara konsep adalah Feature Engineering (fitur input), namun secara teknis baru bisa dihitung setelah tabel `unit` terbentuk (butuh hasil groupby sel x hari x jam), bukan berarti keduanya bagian dari pembentukan label `risk_score`.
+### 2.3 Grid Spasial: 3 Desimal (~110 m/sel)
+Diuji kuantitatif 2 vs 3 desimal.
+- 2 desimal (~1,1 km/sel) → satu sel nyaris menutupi seluruh area studi (radius 600 m), sehingga area rawan dan aman yang berdekatan tercampur — tidak *actionable* untuk Safe Route.
+- 3 desimal (~110 m/sel) dipilih meski lebih sparse, karena granularitasnya setara skala blok jalan — yang memang dibutuhkan supaya Safe Route bisa membedakan satu ruas jalan dari sebelahnya. Konsekuensi sparsity ditangani eksplisit di dua tahap terpisah (lihat 2.6 & 2.7).
 
-**Fitur temporal tambahan:** `is_weekend` (flag biner dari `dow`) saya tambahkan karena EDA menunjukkan pola jam hari kerja vs akhir pekan cukup berbeda bentuknya. `month` sengaja tidak saya sertakan sebagai fitur di level unit, karena akan memecah unit analisis (sel x hari x jam) menjadi (sel x bulan x hari x jam), menambah 12 kemungkinan dimensi baru yang akan membuat data jauh lebih sparse tanpa data pendukung yang cukup, mengingat sel pada resolusi 3 desimal sudah cukup tipis.
+### 2.4 Cyclical Encoding (jam, hari, bulan)
+Jam 23 dan jam 0 secara temporal berdekatan tapi secara numerik jauh (23 vs 0). Encoding sin/cos menjaga jarak antar-waktu tetap konsisten secara siklis, dibuktikan dengan mengecek jarak Euclidean pada bidang (sin, cos) antar jam yang berdekatan.
 
-### 3.2 Pseudo-Labeling
+### 2.5 Safe Place Features — Fitur Terpisah, Bukan Bagian Formula Risk Score
+- **Kriteria titik aman**: pos polisi, damkar, community centre, apotek, rumah sakit, minimarket / supermarket, dan seluruh stasiun CTA — dipilih karena selalu ada orang berjaga/berstaf yang bisa
+  dimintai bantuan.
+- **Radius 500 m** (beda dari radius subset 600 m) — 600 m mendefinisikan *area studi*, sedangkan 500 m mendekati jarak jalan kaki cepat untuk mencari bantuan dari titik pengguna berada.
+- **Kenapa tidak masuk formula risk_score**: risk_score dimaksudkan merepresentasikan satu konstruk — seberapa berbahaya suatu lokasi-waktu berdasar pola kejahatan historis. Kedekatan ke safe place adalah konstruk berbeda (mitigasi/akses bantuan). Mencampur keduanya membuat risk_score sulit diinterpretasi (skor bisa turun karena daerah aman, atau kebetulan dekat kantor polisi padahal tetap rawan). Karena itu disimpan sebagai dua kolom fitur terpisah: `dist_to_nearest_safe_place`, `n_safe_places_within_radius` — supaya modul Safe Route bisa menggabungkan dua sinyal ini dengan logikanya sendiri.
 
-**Severity Scoring (2 level: kategori + modifier).** Saya memakai skor dasar per `Primary Type` (berdasarkan tingkat bahaya obyektif terhadap keselamatan manusia, kejahatan terhadap nyawa/tubuh > kejahatan bersenjata > properti > pelanggaran administratif) ditambah modifier dari kata kunci di `Description` (mis. `AGGRAVATED`, `ARMED`, `SIMPLE`, `ATTEMPT`). Pendekatan ini menghindari masalah baseline di mana satu default dipakai untuk seluruh kombinasi yang tidak tercakup.
+### 2.6 Severity Scoring — 2 Level (Kategori + Modifier)
+Baseline (5 kombinasi manual + 1 default) tidak scalable. Diganti pendekatan 2-level:
+- **Level 1** — skor dasar per `Primary Type` (~30 kategori), ordinal berdasar keparahan (nyawa/tubuh > bersenjata/seksual > properti berat > properti ringan > administratif).
+- **Level 2** — modifier dari kata kunci `Description`:
+    - **Kelompok senjata** (eksklusif, ambil yang terberat): HANDGUN/FIREARM/GUN/KNIFE/DANGEROUS WEAPON.
+    - **Kelompok konteks** (akumulatif, boleh lebih dari satu aktif sekaligus): AGGRAVATED, CHILD, FIRST DEGREE, DOMESTIC, dst — termasuk modifier negatif untuk SIMPLE, ATTEMPT, nilai kecil.
+- Setiap modifier **diverifikasi aktif** di data (dihitung jumlah kemunculannya), bukan diasumsikan bekerja — termasuk perbaikan bug pencocokan tanda baca (`ARMED: HANDGUN` vs `ARMED - HANDGUN`) yang sempat membuat satu modifier tidak pernah aktif.
 
-Hasilnya: cakupan **100%** (0% fallback), naik drastis dari baseline yang **80,46%** baris kena default seragam. Ranking severity per Primary Type konsisten dengan intuisi keamanan publik: `HOMICIDE` (99,99), `CRIMINAL SEXUAL ASSAULT` (99,45), `KIDNAPPING` (92,28) berada di puncak; `BATTERY` (55,2), `ASSAULT` (51,7) di tengah; pelanggaran administratif di dasar, tidak ada anomali urutan yang tidak masuk akal.
+### 2.7 Temporal Decay — Half-Life 90 Hari, Label Window 180 Hari
+- **Pemisahan jendela fitur vs label**: fitur prediktor (`hist_crime_count`, `crime_diversity`, dst) dihitung **hanya** dari kejadian sebelum titik potong (`df_hist`), sedangkan risk_score dibentuk **hanya** dari kejadian dalam 180 hari terakhir (`df_label`). Ini mencegah kebocoran target, tanpa pemisahan ini, fitur dan label dihitung dari himpunan kejadian yang sama sehingga model hanya menghafal tautologi, bukan belajar memprediksi.
+- **Half-life 90 hari** (bukan 180 atau 45) dipilih dan **dipertahankan** dengan alasan:
+    1. Dibaca berpasangan dengan label window 180 hari: kejadian di ujung jendela (hari ke-180) masih menyumbang bobot 25% (`0.5^(180/90)`) — proporsional. Half-life 45 hari akan menyusutkannya jadi ~6%, membuat 180 hari data yang dikumpulkan efektif tidak terpakai.
+    2. Data per unit (sel × jam) sangat sparse (rata-rata 1–2 kejadian/unit); decay yang lebih agresif membuat risk_score makin rentan berubah drastis hanya karena satu-dua kejadian baru, bertentangan dengan tujuan stabilitas tier (lihat 2.9).
+    3. Risk_score berperan sebagai peta risiko dasar untuk Safe Route & Visual Risk Indicator — butuh stabil, bukan sensitif real-time (sensitivitas kejadian terbaru itu domainnya Anonymous Reporting, di luar scope notebook ini).
+    4. Seluruh validasi distribusi & tier yang sudah diperiksa dihasilkan dari nilai ini.
 
-**Temporal Decay (Exponential Half-Life).** Saya mengganti peluruhan linear (yang membuat kejadian tertua berbobot persis 0) dengan bentuk eksponensial $w(t) = 0.5^{age\_days/H}$, dengan $H$ = 180 hari (6 bulan). Pola kejahatan cenderung bergeser dalam hitungan bulan (musim, penegakan hukum), bukan hari (terlalu sensitif) atau tahun (terlalu lambat/stale). Hasil: `w_time_exp` berkisar 0,0408-1,0, kejadian tertua di subset tetap berkontribusi ~4%, tidak pernah nol sepenuhnya seperti pada peluruhan linear.
+### 2.8 Penyusutan Empiris (Empirical Bayes Shrinkage)
+Grid penuh (sel × 7 hari × 24 jam) dibentuk lewat perkalian kartesian — bukan `groupby` langsung — supaya kombinasi tanpa kejadian tetap punya baris bernilai nol (contoh negatif yang sah, bukan data hilang). Konsekuensinya, mayoritas unit sangat sparse. Ditangani dengan shrinkage: `base_value = alpha * obs_value + (1 - alpha) * cell_total * global_share`, di mana `alpha = cell_n / (cell_n + K_SHRINK)`, `K_SHRINK = 50` (jumlah kejadian saat sebuah sel mulai dianggap separuh bisa dipercaya sendiri). Sel dengan sedikit histori "meminjam" bentuk pola waktu dari profil kota, alih-alih mengikuti satu-dua kejadian kebetulan.
 
-**Spatial Aggregation (BallTree + Haversine + Gaussian Kernel).** Saya mengganti rata-rata kasar grid 3×3 (baseline) dengan jarak haversine sesungguhnya (`sklearn.neighbors.BallTree`) dan bobot kernel Gaussian $w = \exp(-d^2/(2\sigma^2))$, radius 1,5 km, sigma 0,6 km. Rata-rata terdapat 494,4 sel bertetangga per sel dalam radius ini (dari total 37.996 sel unik). Untuk efisiensi komputasi, saya vectorize perhitungannya memakai sparse matrix (`scipy.sparse`, 18.784.700 pasangan tetangga non-zero) alih-alih loop per baris, proses selesai dalam hitungan detik, bukan belasan menit. Hasil `risk_raw_v2` berkisar 0,11-194,37, dengan smoothing yang membuat sel-sel dengan data tipis (rata-rata `crime_count` ~1-2 per unit) menjadi lebih stabil karena "meminjam" sinyal dari tetangganya.
+### 2.9 Spatial Smoothing — Gaussian Kernel via BallTree Haversine
+- Diganti dari baseline (rata-rata 8 tetangga grid 3×3, jarak diestimasi dari indeks grid) ke kernel Gaussian berbasis jarak haversine sesungguhnya: `w = exp(-d² / (2σ²))`.
+- Radius & sigma dipilih dari perbandingan kuantitatif beberapa kandidat, dinilai dari rasio simpangan baku sesudah/sebelum smoothing (semakin turun → semakin halus, tapi juga semakin kehilangan granularitas hotspot). **Kandidat terpilih: radius 0.4 km, sigma 0.15 km** (rata-rata 36 tetangga per sel).
+- Bentuk agregasi memakai **rata-rata berbobot**, bukan jumlah berbobot — supaya sel yang kebetulan dikelilingi banyak tetangga tidak mendapat risk_raw yang lebih besar semata karena densitas tetangganya, bukan karena risikonya sungguh lebih tinggi.
 
-**Normalisasi (log1p + Min-Max).** Distribusi `risk_raw_v2` sangat skewed, sehingga saya mengompresnya dengan `log1p` sebelum melakukan min-max scaling ke rentang 0-100. Dibanding peringkat persentil, `log1p` tetap mempertahankan informasi magnitude asli (seberapa jauh perbedaan risiko antar sel); dibanding clipping kuantil, `log1p` tidak membuang informasi apa pun dari sel ekstrem. Hasil akhir `risk_score`: mean 54,58, std 4,17, rentang 0-100, distribusi bell-shaped yang jauh lebih sehat dibanding min-max langsung (yang menumpukkan >80% sel di rentang 0-20 dari skala).
+### 2.10 Normalisasi — `log1p` + Min-Max, Dua Skala Berbeda Peran
+`risk_raw` sangat *right-skewed*. Dibanding alternatif (peringkat persentil, clipping kuantil): `log1p` dipilih karena mempertahankan informasi *magnitude* (seberapa jauh jarak risiko antar sel) tanpa membuang informasi dari sel ekstrem. Karena kompresi log membuat skor tinggi jadi langka (median akan "terbaca" sangat aman kalau ditampilkan mentah), disimpan dua kolom dengan peran berbeda:
+- `risk_score` — hasil `log1p` + min-max, dipakai sebagai target/label model.
+- `risk_score_display` — peringkat persentil, tersebar merata 0–100, dipakai untuk ditampilkan ke pengguna (Visual Risk Indicator).
 
-## 4. Refleksi
+### 2.11 Tiga Tier Risk Indicator — Threshold Persentil 65 & 90
+- Dibagi rata sepertiga-sepertiga (persentil 33/66) ditolak: buruk secara desain produk karena tier merah yang menyala di sepertiga peta akan cepat diabaikan pengguna (*alert fatigue*).
+- Dipakai **persentil 65 & 90**, target proporsi ~65% Aman, 25% Waspada, 10% Rawan — sejalan dengan konvensi sistem peringatan publik yang membuat level tertinggi memang jarang menyala, dan mencerminkan kenyataan bahwa mayoritas area dekat stasiun transit relatif aman.
+- Ambang batas **dibekukan** (disimpan sebagai konstanta `T_LOW`/`T_HIGH` di `model_config.csv`), bukan dihitung ulang tiap kali ada data baru — supaya warna sebuah lokasi tidak berubah semata karena lokasi lain membaik/memburuk.
+- Divalidasi tiga hal: pemisahan skor antar tier tidak overlap, satu sel tidak "berkedip" antar tier terlalu sering sepanjang minggu, dan tier Rawan memang mengelompok di jam-jam yang masuk akal secara EDA (bukan tersebar acak).
 
-**Kendala:**
-- Sebagian kecil data (~0,55%) memiliki koordinat atau tanggal yang tidak valid, saya tangani dengan langkah cleaning standar dari tutorial.
-- Saya menemukan artefak pencatatan waktu (5,80% baris pada jam 00:00/12:00 dengan menit persis `:00`) yang jika dibiarkan akan mendistorsi kesimpulan EDA dan Risk Score, saya verifikasi lewat distribusi menit sebelum memutuskan mengeluarkannya dari analisis.
-- Perhitungan spatial smoothing awal (loop per baris) terlalu lambat untuk 433.002 unit, saya optimasi ulang memakai sparse matrix vectorization agar tetap efisien dijalankan di Colab.
+### 2.12 `arrest_rate` Sengaja Tidak Disertakan
+Bukan karena sistem tidak terhubung ke data kepolisian (seluruh dataset memang berasal dari kepolisian), tapi karena arah hubungannya ambigu — tingkat penangkapan tinggi bisa berarti penegakan hukum aktif (lebih aman) atau justru banyak kejahatan serius (lebih rawan). Karena tandanya tidak bisa ditentukan dari data ini, fitur ini dihilangkan supaya interpretasi modelm tidak menjadi lebih rumit.
 
-**Solusi/pembelajaran:** Saya belajar bahwa kualitas data (termasuk artefak pencatatan yang tidak terlihat sekilas) sama pentingnya dengan pemilihan metode feature engineering, keduanya sama-sama menentukan validitas Risk Score akhir. Saya juga belajar pentingnya mempertimbangkan efisiensi komputasi (vectorization) saat resolusi grid diperhalus, bukan hanya akurasi konsep.
+---
 
-## 5. Struktur Repository
+## 3. Dataset Akhir
+
+`features_labels.csv` / `.parquet` — **1.089.480 baris × 24 kolom** (grid unit lengkap: setiap sel × 7 hari × 24 jam), tanpa nilai kosong, tanpa duplikat kunci unit.
+
+| Kolom | Kategori | Keterangan |
+|---|---|---|
+| `cell_id`, `lat_r`, `lon_r` | Identitas spasial | Grid 3 desimal (~110 m/sel) |
+| `dow`, `hour`, `hour_sin/cos`, `dow_sin/cos`, `is_weekend` | Temporal | Cyclical encoding |
+| `hist_crime_count`, `crime_diversity`, `violent_share`, `night_share`, `street_share` | Historis per sel | Dihitung dari `df_hist` (jendela fitur, terpisah dari label) |
+| `seasonal_cv`, `peak_month_sin/cos` | Musiman | Dikoreksi bias jumlah tahun per bulan |
+| `dominant_crime_type` | Interpretasi | Jenis kejahatan paling sering per sel |
+| `dist_to_nearest_safe_place`, `n_safe_places_within_radius` | Safe Place | Fitur terpisah dari risk_score |
+| `risk_score`, `risk_score_display`, `risk_tier` | Label | Target model / tampilan pengguna / tier 🟢🟡🔴 |
+
+File pendukung lain: `safe_places.csv` (titik-titik aman untuk Safe Place Locator),
+`model_config.csv` (konstanta pipeline: `T_LOW`, `T_HIGH`, `half_life_days`,
+`label_window_days`, `cutoff`, `reference_date`, `radius_km`, `sigma_km`, `k_shrink`,
+`grid_decimals`, `station_radius_m`, `safe_place_radius_m`) — bukan model terlatih, melainkan
+manifest parameter supaya pipeline bisa direproduksi konsisten pada data baru.
+
+---
+
+## 4. Struktur Repo
 
 ```
-├── Hands_On_1.ipynb                 # notebook lengkap 
-├── features_labels.csv              # dataset akhir 
-├── features_labels.parquet          # dataset akhir 
-├── README.md                        # laporan .md
-├── HO1_MLOps_NadiaAisyahFazila.pdf  # laporan .pdf     
+.
+├── README.md                  # dokumen ini
+├── final_project.ipynb        # notebook utama: HO-1 (cleaning → EDA → FE → pseudo-labeling)
+├── features_labels.csv        # dataset fitur + label (risk_score, risk_tier)
+├── features_labels.parquet    # versi parquet, sama isinya, lebih ringkas
+├── safe_places.csv            # titik-titik aman untuk Safe Place Locator
+└── model_config.csv           # konstanta pipeline (T_LOW/T_HIGH, half-life, radius, dst.)
 ```
-
-## 6. Penerapan Feedback
-
-Setelah laporan awal, ditemukan beberapa isu lewat review mandiri terhadap notebook dan diperbaiki sebagai berikut.
-
-### 6.1 Bug Overwrite Tabel `unit`
-
-Ditemukan bug penamaan variabel: tabel `unit` versi `severity_v2` + exponential decay (dibangun di section 5.2) sempat tertimpa oleh tabel versi baseline (severity 5 kombinasi + linear decay) karena keduanya memakai nama variabel yang sama dan dieksekusi berurutan. Akibatnya seluruh pipeline sesudahnya (spatial smoothing, normalisasi) sempat beroperasi di atas base_value versi baseline, bukan versi yang sudah dikembangkan.
-
-Perbaikan: tabel baseline dipisah menjadi `unit_baseline`, sehingga `unit` benar benar hanya berisi hasil dari `severity_v2` dan exponential decay sepanjang pipeline utama.
-
-### 6.2 `crime_diversity` dan `arrest_rate` Nyaris Konstan
-
-Pada level agregasi awal (cell x dow x hour), kedua fitur ini nyaris tidak bervariasi karena rata rata hanya ada 1 sampai 2 kejadian per unit.
-
-| Fitur | Level cell x dow x hour | Level cell_id |
-|---|---|---|
-| crime_diversity (mean) | 1,12 | 8,40 |
-| crime_diversity (IQR) | 1 sampai 1 | 6 sampai 11 |
-| arrest_rate (mean) | 0,146 | 0,147 |
-| arrest_rate (IQR) | 0 sampai 0 | 0,045 sampai 0,207 |
-
-Solusi: kedua fitur dihitung ulang di level `cell_id` saja, karena secara domain keduanya lebih tepat dipahami sebagai karakteristik area, bukan karakteristik yang berubah tiap jam atau hari.
-
-### 6.3 Insight Musiman yang Sempat Hilang
-
-Fitur `month` sengaja tidak dijadikan dimensi baru di unit analisis karena akan membuat data 12 kali lebih sparse. Sebagai jalan tengah, ditambahkan dua fitur musiman di level `cell_id`.
-
-- `seasonal_cv`, coefficient of variation jumlah kejadian per bulan di suatu sel, menunjukkan seberapa musiman pola kejahatan di lokasi tersebut.
-- `peak_month_sin` dan `peak_month_cos`, encoding siklikal dari bulan dengan jumlah kejadian terbanyak di sel tersebut.
-
-### 6.4 Distribusi `risk_score` Terlalu Sempit
-
-Setelah bug pada 6.1 diperbaiki, distribusi risk score masih relatif sempit (IQR sekitar 49,15 sampai 55,64 dari skala 0 sampai 100). Diagnosis menunjukkan radius smoothing 1,5 km (rata rata 494 tetangga per sel) terlalu meratakan variasi antar sel.
-
-Perbaikan: radius diperkecil menjadi 0,4 km dengan sigma 0,15 km, menghasilkan rata rata 39,9 tetangga per sel, jauh lebih lokal sehingga sel rawan dan sel aman tetap dapat dibedakan.
-
-| Versi | mean | std | IQR |
-|---|---|---|---|
-| risk_score_v2 (radius 1,5 km) | 52,17 | 5,55 | 49,15 sampai 55,64 |
-| risk_score_v3 (radius 0,4 km, final) | 44,13 | 11,98 | 36,27 sampai 52,49 |
-
-`risk_score_v3` inilah yang disimpan sebagai kolom `risk_score` pada dataset akhir.

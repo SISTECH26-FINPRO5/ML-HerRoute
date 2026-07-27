@@ -1,0 +1,2 @@
+T_LOW,T_HIGH,half_life_days,label_window_days,cutoff,reference_date,radius_km,sigma_km,k_shrink,grid_decimals,station_radius_m,safe_place_radius_m
+14.431240423156598,25.388472729908003,90,180,2025-10-12 23:56:00,2026-04-10 23:56:00,0.4,0.15,50,3,600,500
