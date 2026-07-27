@@ -10,6 +10,7 @@ Karena data kejahatan & transit Jakarta (MRT) tidak tersedia untuk kebutuhan ini
 
 Fitur di luar scope ini (SOS/emergency, anonymous reporting, integrasi kepolisian/CCTV, moda transportasi selain MRT) **tidak** direpresentasikan di notebook ini.
 
+Link features_labels.csv (Tidak cukup untuk di push ke github karena size >= 100 MB): [https://drive.google.com/file/d/1MHamOo-2fhbgLtBjjNWZz4dCHH0FAcEV/view?usp=sharing]
 ---
 
 ## 1. Alur Pipeline
