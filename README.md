@@ -104,3 +104,46 @@ Hasilnya: cakupan **100%** (0% fallback), naik drastis dari baseline yang **80,4
 ├── README.md                        # laporan .md
 ├── HO1_MLOps_NadiaAisyahFazila.pdf  # laporan .pdf     
 ```
+
+## 6. Penerapan Feedback
+
+Setelah laporan awal, ditemukan beberapa isu lewat review mandiri terhadap notebook dan diperbaiki sebagai berikut.
+
+### 6.1 Bug Overwrite Tabel `unit`
+
+Ditemukan bug penamaan variabel: tabel `unit` versi `severity_v2` + exponential decay (dibangun di section 5.2) sempat tertimpa oleh tabel versi baseline (severity 5 kombinasi + linear decay) karena keduanya memakai nama variabel yang sama dan dieksekusi berurutan. Akibatnya seluruh pipeline sesudahnya (spatial smoothing, normalisasi) sempat beroperasi di atas base_value versi baseline, bukan versi yang sudah dikembangkan.
+
+Perbaikan: tabel baseline dipisah menjadi `unit_baseline`, sehingga `unit` benar benar hanya berisi hasil dari `severity_v2` dan exponential decay sepanjang pipeline utama.
+
+### 6.2 `crime_diversity` dan `arrest_rate` Nyaris Konstan
+
+Pada level agregasi awal (cell x dow x hour), kedua fitur ini nyaris tidak bervariasi karena rata rata hanya ada 1 sampai 2 kejadian per unit.
+
+| Fitur | Level cell x dow x hour | Level cell_id |
+|---|---|---|
+| crime_diversity (mean) | 1,12 | 8,40 |
+| crime_diversity (IQR) | 1 sampai 1 | 6 sampai 11 |
+| arrest_rate (mean) | 0,146 | 0,147 |
+| arrest_rate (IQR) | 0 sampai 0 | 0,045 sampai 0,207 |
+
+Solusi: kedua fitur dihitung ulang di level `cell_id` saja, karena secara domain keduanya lebih tepat dipahami sebagai karakteristik area, bukan karakteristik yang berubah tiap jam atau hari.
+
+### 6.3 Insight Musiman yang Sempat Hilang
+
+Fitur `month` sengaja tidak dijadikan dimensi baru di unit analisis karena akan membuat data 12 kali lebih sparse. Sebagai jalan tengah, ditambahkan dua fitur musiman di level `cell_id`.
+
+- `seasonal_cv`, coefficient of variation jumlah kejadian per bulan di suatu sel, menunjukkan seberapa musiman pola kejahatan di lokasi tersebut.
+- `peak_month_sin` dan `peak_month_cos`, encoding siklikal dari bulan dengan jumlah kejadian terbanyak di sel tersebut.
+
+### 6.4 Distribusi `risk_score` Terlalu Sempit
+
+Setelah bug pada 6.1 diperbaiki, distribusi risk score masih relatif sempit (IQR sekitar 49,15 sampai 55,64 dari skala 0 sampai 100). Diagnosis menunjukkan radius smoothing 1,5 km (rata rata 494 tetangga per sel) terlalu meratakan variasi antar sel.
+
+Perbaikan: radius diperkecil menjadi 0,4 km dengan sigma 0,15 km, menghasilkan rata rata 39,9 tetangga per sel, jauh lebih lokal sehingga sel rawan dan sel aman tetap dapat dibedakan.
+
+| Versi | mean | std | IQR |
+|---|---|---|---|
+| risk_score_v2 (radius 1,5 km) | 52,17 | 5,55 | 49,15 sampai 55,64 |
+| risk_score_v3 (radius 0,4 km, final) | 44,13 | 11,98 | 36,27 sampai 52,49 |
+
+`risk_score_v3` inilah yang disimpan sebagai kolom `risk_score` pada dataset akhir.
