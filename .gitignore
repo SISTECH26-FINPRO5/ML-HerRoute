@@ -4,10 +4,12 @@ env/
 .venv/
 
 # Dataset 
-chicago_crimes.csv
-features_labels.csv
-*/chicago_crimes.csv
-*/features_labels.csv
+data/chicago_crimes.csv
+data/features_labels.csv
+data/features_labels_timeseries.csv
+data/safe_places.csv
+data/model_config.csv
+data/features_labels.parquet
 
 # OS files
 */.DS_STORE
