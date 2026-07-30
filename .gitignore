@@ -1,4 +1,19 @@
-*/chicago_crimes.csv
+# Virtual environment
+venv/
+env/
+.venv/
+
+# Dataset 
 chicago_crimes.csv
+features_labels.csv
+*/chicago_crimes.csv
+*/features_labels.csv
+
+# OS files
 */.DS_STORE
-.DS_STOREfeatures_labels.csv
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
