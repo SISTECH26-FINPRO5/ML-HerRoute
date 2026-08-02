@@ -26,10 +26,9 @@ Ini adalah **hasil akhir siap pakai**, cuma satu model champion terpilih beserta
 | `model_context.joblib` | `dict`: `cell_target_map`, `global_mean_val`, `T_LOW`, `T_HIGH`, `GRID_DECIMALS`, `FEATURE_COLS_V2` | Menyusun fitur (`assemble_features_v2_dynamic`) & menentukan tier warna risiko |
 | `cell_hist_lookup.joblib` | `dict` berisi `cell_hist_lookup` (histori kejadian per sel Chicago asli) | `snap_to_nearest_cell()` — nempelin titik ke sel Chicago terdekat |
 | `remap_bounds.joblib` | `dict`: `JKT_LAT_RANGE`, `JKT_LON_RANGE`, `CHI_LAT_RANGE`, `CHI_LON_RANGE` | `remap_coord()` — proyeksi koordinat Jakarta ke rentang yang dikenali model |
-| `risk_graph_source.joblib` | `dict` berisi `df_for_graph` (`cell_id`, `lat_r`, `lon_r`, `risk_score`) — **data mentah**, bukan graf jadi | Dipakai untuk bangun ulang graf via `build_risk_graph()` + `connect_components()` saat BE startup |
+| `risk_graph.joblib` | Objek `networkx.Graph` yang sudah jadi (node, edge, bobot `weight_safe`/`weight_fast`), bukan data mentah | Langsung di-`joblib.load()` saat BE startup, tanpa perlu memanggil `build_risk_graph()` atau `connect_components()` lagi |
 | `safe_places.csv` | Daftar tempat aman (nama, tipe amenity, koordinat) | `find_nearest_safe_places()` |
 | `model_config.csv` | Threshold `T_LOW`/`T_HIGH`, `grid_decimals` | Konsistensi tier & pembulatan koordinat dengan notebook |
 
 **Catatan penting untuk BE:**
-- `risk_graph_source.joblib` **bukan** graf yang sudah jadi, cuma datanya. Fungsi `build_risk_graph()` (+ helper `connect_components()`, yang menyambungkan klaster-klaster sel yang terisolasi) harus tetap dipanggil sekali saat aplikasi start, hasilnya baru di-cache di memory (jangan dibangun ulang tiap request).
 - Semua koordinat Jakarta yang masuk lewat endpoint **wajib** melalui `remap_coord()` dulu sebelum dipakai fungsi lain, karena model dilatih dari data Chicago. Setiap respons prediksi harus menyertakan flag `is_mock: true` supaya FE bisa tampilkan disclaimer ke pengguna.
