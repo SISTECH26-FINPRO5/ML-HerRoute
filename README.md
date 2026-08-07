@@ -1,4 +1,10 @@
-# HerRoute: Safety-Tech App untuk Rute Aman di Jakarta
+# HerRoute: Safety-Tech App untuk Rute Aman di 
+
+<p align="center">
+  <strong>Group 5</strong> Nadia Aisyah Fazila & Sabbia Meilandri Putri Delarosya 
+</p>
+
+---
 
 ## Deskripsi Proyek
 
